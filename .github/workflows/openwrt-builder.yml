@@ -135,28 +135,83 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    # 添加上传步骤
+    # 添加收集固件文件的步骤
+    - name: Collect firmware files
+      id: collect-firmware
+      run: |
+        cd openwrt
+        FIRMWARE_DIR="firmware_${DEVICE_NAME}${FILE_DATE}"
+        mkdir -p ../$FIRMWARE_DIR
+        
+        # 复制固件文件
+        if [ -d bin/targets ]; then
+          find bin/targets -name "*.bin" -o -name "*.img" -o -name "*.gz" -o -name "*.trx" -o -name "*.elf" | head -20 | while read file; do
+            cp "$file" ../$FIRMWARE_DIR/
+          done
+        fi
+        
+        # 复制配置文件
+        if [ -f .config ]; then
+          cp .config ../$FIRMWARE_DIR/
+        fi
+        
+        # 复制 sha256sums 文件
+        if [ -f bin/targets/*/*/sha256sums ]; then
+          cp bin/targets/*/*/sha256sums ../$FIRMWARE_DIR/ 2>/dev/null || true
+        fi
+        
+        echo "收集到的固件文件："
+        ls -la ../$FIRMWARE_DIR/
+        
+        echo "firmware_dir=$FIRMWARE_DIR" >> $GITHUB_OUTPUT
+
+    # 创建发布标签
+    - name: Create release tag
+      id: tag
+      run: |
+        TAG_NAME="firmware-$(date +'%Y%m%d-%H%M%S')"
+        echo "release_tag=$TAG_NAME" >> $GITHUB_OUTPUT
+        echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+
+    # 创建发布说明
+    - name: Create release notes
+      run: |
+        cat > release.txt << EOF
+        OpenWrt 固件编译完成
+        编译时间: $(date)
+        设备名称: ${DEVICE_NAME}
+        源码仓库: $REPO_URL
+        分支: $REPO_BRANCH
+        
+        包含文件:
+        $(ls -1 openwrt/${{ steps.collect-firmware.outputs.firmware_dir }} 2>/dev/null || echo "无固件文件")
+        
+        EOF
+
+    # 上传固件到 Release
     - name: Upload firmware to release
-      uses: softprops/action-gh-release@master
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+      uses: softprops/action-gh-release@v1
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
+        name: "OpenWrt Firmware ${{ steps.tag.outputs.release_tag }}"
         body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        files: |
+          openwrt/${{ steps.collect-firmware.outputs.firmware_dir }}/*
+
+    # 上传固件到 Artifacts
+    - name: Upload firmware artifacts
+      uses: actions/upload-artifact@v4
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true'
+      with:
+        name: openwrt-firmware-${{ steps.tag.outputs.release_tag }}
+        path: openwrt/${{ steps.collect-firmware.outputs.firmware_dir }}/*
+        retention-days: 30
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
       with:
         retain_days: 0
         keep_minimum_runs: 2
-
-    - name: Remove old Releases
-      uses: dev-drprasad/delete-older-releases@master
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      with:
-        keep_latest: 3
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
