@@ -137,22 +137,26 @@ jobs:
 
     # 添加上传步骤
     - name: Upload firmware to release
-      if: env.UPLOAD_RELEASE == 'true' && steps.compile.outputs.status == 'success'
-      uses: softprops/action-gh-release@v1
-      with:
-        files: openwrt/bin/targets/**/*
-        body: "Automated build from GitHub Actions"
+      uses: softprops/action-gh-release@master
+      if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Upload firmware as artifact
-      if: env.UPLOAD_FIRMWARE == 'true' && env.UPLOAD_RELEASE != 'true' && steps.compile.outputs.status == 'success'
-      uses: actions/upload-artifact@v4
       with:
-        name: firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin/targets/
-        retention-days: 30
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
 
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
