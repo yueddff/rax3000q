@@ -38,18 +38,16 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    # 第一层：使用 free-disk-space Action
     - name: Free Disk Space (Action)
       uses: jlumbroso/free-disk-space@main
       with:
-        tool-cache: false  # 保留工具缓存
-        android: true      # 清理 Android
-        dotnet: true       # 清理 .NET
-        haskell: true      # 清理 Haskell
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
         large-packages: true
         swap-storage: true
 
-    # 第二层：自定义深度清理
     - name: 清理系统空间
       run: |
         echo "======================="
@@ -57,11 +55,9 @@ jobs:
         echo "======================="
         df -h
         
-        # 基础 apt 清理
         sudo apt-get clean
         sudo apt-get autoremove -y
         
-        # 深度删除特定目录
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
@@ -70,7 +66,6 @@ jobs:
         sudo rm -rf /opt/pipx
         sudo rm -rf /usr/share/swift
         
-        # 额外清理（可选）
         sudo rm -rf /usr/local/lib/node_modules
         sudo rm -rf /usr/local/share/chromium
         sudo rm -rf /usr/local/lib/python*
@@ -81,7 +76,6 @@ jobs:
         echo "======================="
         df -h
 
-    # 第三层：检查总体空间情况
     - name: 检查最终磁盘空间
       run: |
         echo "======================="
@@ -100,7 +94,6 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    # ... 其余步骤保持不变
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
@@ -142,8 +135,24 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
+    # 添加上传步骤
+    - name: Upload firmware to release
+      if: env.UPLOAD_RELEASE == 'true' && steps.compile.outputs.status == 'success'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: openwrt/bin/targets/**/*
+        body: "Automated build from GitHub Actions"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload firmware as artifact
+      if: env.UPLOAD_FIRMWARE == 'true' && env.UPLOAD_RELEASE != 'true' && steps.compile.outputs.status == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin/targets/
+        retention-days: 30
+
     - name: Check space usage
       if: (!cancelled())
       run: df -hT
-
-    # ... 后续上传等步骤保持不变
