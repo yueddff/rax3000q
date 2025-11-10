@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/12yuedf/1222
+  REPO_URL: https://github.com/kkstone/immortalwrt-ipq50xx
   REPO_BRANCH: master
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
