@@ -1,3 +1,15 @@
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+#
+# File: .github/workflows/openwrt-bulder.yml
+# Description: Build OpenWrt using GitHub Actions
+#
+# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+
 name: OpenWrt Builder
 
 on:
@@ -5,7 +17,7 @@ on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/kkstone/immortalwrt-ipq50xx
+  REPO_URL: https://github.com/yueddff/lede
   REPO_BRANCH: master
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
@@ -37,55 +49,6 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
-
-    - name: Free Disk Space (Action)
-      uses: jlumbroso/free-disk-space@main
-      with:
-        tool-cache: false
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: true
-        swap-storage: true
-
-    - name: 清理系统空间
-      run: |
-        echo "======================="
-        echo "清理前空间使用情况："
-        echo "======================="
-        df -h
-        
-        sudo apt-get clean
-        sudo apt-get autoremove -y
-        
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /opt/hostedtoolcache/CodeQL
-        sudo rm -rf /opt/microsoft
-        sudo rm -rf /opt/pipx
-        sudo rm -rf /usr/share/swift
-        
-        sudo rm -rf /usr/local/lib/node_modules
-        sudo rm -rf /usr/local/share/chromium
-        sudo rm -rf /usr/local/lib/python*
-        sudo rm -rf /var/lib/apt/lists/*
-        
-        echo "======================="
-        echo "清理后空间使用情况："
-        echo "======================="
-        df -h
-
-    - name: 检查最终磁盘空间
-      run: |
-        echo "======================="
-        echo "最终磁盘空间使用情况："
-        echo "======================="
-        df -h
-        echo "======================="
-        echo "最大的文件和目录："
-        echo "======================="
-        sudo du -sh /* 2>/dev/null | sort -hr | head -20
 
     - name: Clone source code
       working-directory: /workdir
@@ -135,83 +98,63 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    # 添加收集固件文件的步骤
-    - name: Collect firmware files
-      id: collect-firmware
-      run: |
-        cd openwrt
-        FIRMWARE_DIR="firmware_${DEVICE_NAME}${FILE_DATE}"
-        mkdir -p ../$FIRMWARE_DIR
-        
-        # 复制固件文件
-        if [ -d bin/targets ]; then
-          find bin/targets -name "*.bin" -o -name "*.img" -o -name "*.gz" -o -name "*.trx" -o -name "*.elf" | head -20 | while read file; do
-            cp "$file" ../$FIRMWARE_DIR/
-          done
-        fi
-        
-        # 复制配置文件
-        if [ -f .config ]; then
-          cp .config ../$FIRMWARE_DIR/
-        fi
-        
-        # 复制 sha256sums 文件
-        if [ -f bin/targets/*/*/sha256sums ]; then
-          cp bin/targets/*/*/sha256sums ../$FIRMWARE_DIR/ 2>/dev/null || true
-        fi
-        
-        echo "收集到的固件文件："
-        ls -la ../$FIRMWARE_DIR/
-        
-        echo "firmware_dir=$FIRMWARE_DIR" >> $GITHUB_OUTPUT
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
 
-    # 创建发布标签
-    - name: Create release tag
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
+      id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate release tag
       id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        TAG_NAME="firmware-$(date +'%Y%m%d-%H%M%S')"
-        echo "release_tag=$TAG_NAME" >> $GITHUB_OUTPUT
-        echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    # 创建发布说明
-    - name: Create release notes
-      run: |
-        cat > release.txt << EOF
-        OpenWrt 固件编译完成
-        编译时间: $(date)
-        设备名称: ${DEVICE_NAME}
-        源码仓库: $REPO_URL
-        分支: $REPO_BRANCH
-        
-        包含文件:
-        $(ls -1 openwrt/${{ steps.collect-firmware.outputs.firmware_dir }} 2>/dev/null || echo "无固件文件")
-        
-        EOF
-
-    # 上传固件到 Release
     - name: Upload firmware to release
-      uses: softprops/action-gh-release@v1
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true'
+      uses: softprops/action-gh-release@master
+      if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
-        name: "OpenWrt Firmware ${{ steps.tag.outputs.release_tag }}"
         body_path: release.txt
-        files: |
-          openwrt/${{ steps.collect-firmware.outputs.firmware_dir }}/*
-
-    # 上传固件到 Artifacts
-    - name: Upload firmware artifacts
-      uses: actions/upload-artifact@v4
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true'
-      with:
-        name: openwrt-firmware-${{ steps.tag.outputs.release_tag }}
-        path: openwrt/${{ steps.collect-firmware.outputs.firmware_dir }}/*
-        retention-days: 30
+        files: ${{ env.FIRMWARE }}/*
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
       with:
         retain_days: 0
         keep_minimum_runs: 2
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
