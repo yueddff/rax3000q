@@ -20,7 +20,7 @@ on:
         default: 'false'
 
 env:
-  REPO_URL: https://github.com/yueddff/lede
+  REPO_URL: https://github.com/12yuedf/lede
   REPO_BRANCH: master
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
@@ -36,6 +36,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 120 
     steps:
     - name: Before freeing up disk space
       run: |
